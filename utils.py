@@ -1,3 +1,6 @@
+"""Mostly taken (and adjusted) from:
+https://github.com/marco-willi/cas-dl-compvis-exercises-hs2024
+"""
 import os
 from pathlib import Path
 from typing import Callable
@@ -7,7 +10,8 @@ from PIL import Image
 
 import json
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
+import lightning as L
 
 SCRIPT_DIR = Path(__file__).parent
 label_names = json.load(open(SCRIPT_DIR / "part_names.json", "r"))
@@ -144,3 +148,58 @@ class ImageFolderRandom(ImageFolder):
         if self.transform:
             random_image = self.transform(random_image)
         return {"image": random_image, "label": label_num}
+
+class DataSetModule(L.LightningDataModule):
+    """Create a data module to manage train, validation and test sets."""
+
+    def __init__(
+        self,
+        ds_train: Dataset,
+        ds_val: Dataset,
+        ds_test: Dataset,
+        classes: list[str],
+        train_transform: Callable | None,
+        test_transform: Callable | None,
+        batch_size: int = 32,
+        num_workers: int = 4,
+    ):
+        super().__init__()
+        self.classes = classes
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+
+        self.ds_train = ds_train
+        self.ds_val = ds_val
+        self.ds_test = ds_test
+        self.train_transform = train_transform
+        self.test_transform = test_transform
+
+    def setup(self, stage=None):
+        """Split the dataset into train, validation, and test sets."""
+        if stage == "fit" or stage is None:
+            if self.train_transform is not None:
+                self.ds_train.transform = self.train_transform
+            if self.test_transform is not None:
+                self.ds_val.transform = self.test_transform
+
+        if stage == "test" or stage is None:
+            if self.test_transform is not None:
+                self.ds_test.transform = self.test_transform
+
+    def train_dataloader(self):
+        """Return the train data loader."""
+        return DataLoader(
+            self.ds_train, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers
+        )
+
+    def val_dataloader(self):
+        """Return the validation data loader."""
+        return DataLoader(
+            self.ds_val, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
+        )
+
+    def test_dataloader(self):
+        """Return the test data loader."""
+        return DataLoader(
+            self.ds_test, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
+        )
