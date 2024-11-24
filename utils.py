@@ -2,6 +2,7 @@
 https://github.com/marco-willi/cas-dl-compvis-exercises-hs2024
 """
 import os
+import zipfile
 from pathlib import Path
 from typing import Callable
 
@@ -10,12 +11,46 @@ from PIL import Image
 
 import json
 
+from robust_downloader import download
+from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
 import lightning as L
 
 SCRIPT_DIR = Path(__file__).parent
 label_names = json.load(open(SCRIPT_DIR / "part_names.json", "r"))
 label_name_to_number = dict((reversed(item) for item in label_names.items()))
+
+
+def in_colab():
+    try:
+        import google.colab
+
+        in_colab = True
+    except:
+        in_colab = False
+
+    print(f"In colab: {in_colab}")
+    return in_colab
+
+
+def setup_colab():
+    from google.colab import drive
+    drive.mount("/content/drive")
+
+
+def download_and_unpack(url, filename, data_dir=SCRIPT_DIR / "data"):
+    data_download_dir = Path(data_dir) / "download"
+    data_download_dir.mkdir(parents=True, exist_ok=True)
+    data_archive = data_download_dir / filename
+    if not data_archive.exists():
+        download(url, data_download_dir, filename)
+    data_set_dir = data_dir / "data_set"
+    if not data_set_dir.exists():
+        data_set_dir.mkdir(parents=True, exist_ok=True)
+        print(data_archive)
+        with zipfile.ZipFile(data_archive, "r") as zipf:
+            zipf.extractall(data_set_dir)
+    return data_set_dir
 
 
 def verify_image(fn):
@@ -30,16 +65,28 @@ def verify_image(fn):
         return False
 
 
-def find_all_images_and_labels(image_dir: str) -> list[dict]:
+def find_all_images_and_labels(image_dirs) -> list[dict]:
     """
     Load image paths and corresponding labels.
 
     Args:
-        image_dir: Directory with all the images.
+        image_dirs: Directory (or list of directories) with all the images.
 
     Returns:
         A list of dicts, one for each obsevation
     """
+
+    if not isinstance(image_dirs, list):
+        image_dirs = [image_dirs]
+
+    observations = []
+    for image_dir in image_dirs:
+        observations.extend(_find_all_images_and_labels_in_dir(image_dir))
+    return observations
+
+
+
+def _find_all_images_and_labels_in_dir(image_dir):
     observations = list()
     dirs = Path(image_dir).iterdir()
     dirs = [d for d in dirs if d.is_dir()]
@@ -203,3 +250,27 @@ class DataSetModule(L.LightningDataModule):
         return DataLoader(
             self.ds_test, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers
         )
+
+def create_train_test_split(
+    ids: list[int],
+    labels: list[int | str],
+    random_state: int = 123,
+    test_size: float = 0.2,
+    val_size: float = 0.1,
+) -> tuple[list[dict], list[dict], list[dict]]:
+
+    train_ids, test_ids = train_test_split(
+        ids,
+        stratify=labels,
+        test_size=test_size,
+        random_state=random_state,
+    )
+
+    train_ids, val_ids = train_test_split(
+        train_ids,
+        stratify=[labels[i] for i in train_ids],
+        test_size=val_size,
+        random_state=random_state,
+    )
+
+    return train_ids, val_ids, test_ids
