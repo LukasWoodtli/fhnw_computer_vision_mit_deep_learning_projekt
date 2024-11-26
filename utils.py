@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
+import torch
 from PIL import Image
 
 import json
 
+from matplotlib import pyplot as plt
 from robust_downloader import download
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
@@ -274,3 +276,36 @@ def create_train_test_split(
     )
 
     return train_ids, val_ids, test_ids
+
+def labels_hist(observations):
+    l = [l["label"] for l in observations]
+    plt.hist(l)
+    plt.xticks(rotation=90)
+    if len(l) > 15:
+        plt.gca().set_xticklabels([])
+    plt.show()
+
+def plot_random_image_grid(data):
+    # plot a grid
+    cols, rows = 3, 3
+    sample_ids = torch.randint(len(data), size=(cols * rows,))
+    figure = plt.figure(figsize=(8, 8))
+    for i in range(0, cols * rows):
+        sample_idx = sample_ids[i]
+        observation = data.observations[sample_idx]
+        img_path = observation["image_path"]
+        label = observation["label"]
+        figure.add_subplot(rows, cols, i + 1)
+        plt.title(label[:20])
+        plt.axis("off")
+        img = plt.imread(img_path)
+        plt.imshow(img, cmap="gray")
+    plt.show()
+
+    
+def print_tensorboard_cmd():
+    logdir = SCRIPT_DIR / "lightning_logs"
+    print("Run in venv:")
+    print(" ".join(['tensorboard', f'--logdir="{logdir}"', '--host=127.0.0.1', '--port=6006']))
+    print(f"Log dir: {logdir}\nserver on: http://127.0.0.1:6006")
+
