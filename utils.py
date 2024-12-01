@@ -40,18 +40,25 @@ def setup_colab():
     drive.mount("/content/drive")
 
 
-def download_and_unpack(url, filename, data_dir=SCRIPT_DIR / "data"):
+def download_and_unpack(url, filename, data_dir=SCRIPT_DIR / "data", files_to_unzip=None):
     data_download_dir = Path(data_dir) / "download"
     data_download_dir.mkdir(parents=True, exist_ok=True)
     data_archive = data_download_dir / filename
     if not data_archive.exists():
         download(url, data_download_dir, filename)
     data_set_dir = data_dir / "data_set"
+
     if not data_set_dir.exists():
         data_set_dir.mkdir(parents=True, exist_ok=True)
         print(data_archive)
         with zipfile.ZipFile(data_archive, "r") as zipf:
-            zipf.extractall(data_set_dir)
+            if files_to_unzip:
+                for file_in_zip in zipf.namelist():
+                    for f in files_to_unzip:
+                        if file_in_zip.startswith(f + "/"):
+                         zipf.extract(file_in_zip, path=data_set_dir)
+            else:
+                zipf.extractall(data_set_dir)
     return data_set_dir
 
 
@@ -64,10 +71,11 @@ def verify_image(fn):
         return True
     except:
         print(f"File {fn} could not be opened")
+        Path(fn).unlink()
         return False
 
 
-def find_all_images_and_labels(image_dirs) -> list[dict]:
+def find_all_images_and_labels(image_dirs, max_images_per_folder=None, verify=True) -> list[dict]:
     """
     Load image paths and corresponding labels.
 
@@ -83,12 +91,12 @@ def find_all_images_and_labels(image_dirs) -> list[dict]:
 
     observations = []
     for image_dir in image_dirs:
-        observations.extend(_find_all_images_and_labels_in_dir(image_dir))
+        observations.extend(_find_all_images_and_labels_in_dir(image_dir, max_images_per_folder, verify))
     return observations
 
 
 
-def _find_all_images_and_labels_in_dir(image_dir):
+def _find_all_images_and_labels_in_dir(image_dir, max_images_per_folder=None, verify=True):
     observations = list()
     dirs = Path(image_dir).iterdir()
     dirs = [d for d in dirs if d.is_dir()]
@@ -98,9 +106,15 @@ def _find_all_images_and_labels_in_dir(image_dir):
     for dir in dirs:
         label = dir.name
         class_dir = os.path.join(image_dir, label)
-        for img_name in os.listdir(class_dir):
+        images = os.listdir(class_dir)
+        if max_images_per_folder is not None:
+            images_in_folder = len(images)
+            if images_in_folder > max_images_per_folder:
+                images = images[:max_images_per_folder]
+        for img_name in images:
             img_path = os.path.join(class_dir, img_name)
-            verify_image(img_path)
+            if verify:
+                verify_image(img_path)
             if any(img_path.lower().endswith(ext) for ext in image_extensions):
                 observation = {"image_path": img_path, "label": label_names[label]}
                 observations.append(observation)
@@ -114,6 +128,8 @@ class ImageFolder(Dataset):
         self,
         root_path: str | Path,
         transform: Callable | None = None,
+        max_images_per_folder = None,
+        verify=True
     ):
         """
         Args:
@@ -122,7 +138,7 @@ class ImageFolder(Dataset):
             classes: List of class names.
         """
         self.root_path = root_path
-        self.observations = find_all_images_and_labels(root_path)
+        self.observations = find_all_images_and_labels(root_path, max_images_per_folder, verify)
         self.transform = transform
         self.classes = sorted({x["label"] for x in self.observations})
         print(
@@ -170,6 +186,7 @@ class ImageFolder(Dataset):
         subset_instance = cls(
             root_path=original_dataset.root_path,
             transform=original_dataset.transform if transform is None else transform,
+            verify=False,
         )
 
         # Filter the observations based on the subset indices
@@ -197,6 +214,21 @@ class ImageFolderRandom(ImageFolder):
         if self.transform:
             random_image = self.transform(random_image)
         return {"image": random_image, "label": label_num}
+
+def load_ds_cached(data_paths, max_images_per_folder=None, clear_cache=False, verify=True):
+    DS_PICKLE_FILE = SCRIPT_DIR / "dataset.pkl"
+    import pickle
+    if not clear_cache and DS_PICKLE_FILE.exists():
+        with open(DS_PICKLE_FILE, "rb") as f:
+            ds = pickle.load(f)
+            return ds
+    else:
+        ds = ImageFolder(data_paths, max_images_per_folder=max_images_per_folder, verify=verify)
+
+        DS_PICKLE_FILE.unlink(missing_ok=True)
+        with open(DS_PICKLE_FILE, "wb") as f:
+            pickle.dump(ds, f)
+        return ds
 
 class DataSetModule(L.LightningDataModule):
     """Create a data module to manage train, validation and test sets."""
@@ -267,6 +299,7 @@ def create_train_test_split(
         test_size=test_size,
         random_state=random_state,
     )
+    
 
     train_ids, val_ids = train_test_split(
         train_ids,
@@ -281,9 +314,11 @@ def labels_hist(observations):
     l = [l["label"] for l in observations]
     plt.hist(l)
     plt.xticks(rotation=90)
-    if len(l) > 15:
+    if len(l) > 40:
         plt.gca().set_xticklabels([])
     plt.show()
+    return plt
+
 
 def plot_random_image_grid(data):
     # plot a grid
@@ -301,6 +336,7 @@ def plot_random_image_grid(data):
         img = plt.imread(img_path)
         plt.imshow(img, cmap="gray")
     plt.show()
+    return plt
 
     
 def print_tensorboard_cmd():
@@ -308,4 +344,3 @@ def print_tensorboard_cmd():
     print("Run in venv:")
     print(" ".join(['tensorboard', f'--logdir="{logdir}"', '--host=127.0.0.1', '--port=6006']))
     print(f"Log dir: {logdir}\nserver on: http://127.0.0.1:6006")
-
